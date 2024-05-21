@@ -1,12 +1,11 @@
 import sys
-import copy
 import datetime as dt
 from copy import deepcopy
 from multiprocessing.pool import ThreadPool
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 from dateutil.parser import parse as parse_datetime
-
 from sqlalchemy import func, null
 import numpy as np
 
@@ -29,7 +28,8 @@ logger = log.getLogger(__name__)
 IS_PY36 = sys.version_info[1] <= 6
 
 
-def delete_model_storage(model_id, ctx_dump):
+def delete_model_storage(model_id: str, ctx_dump: dict) -> None:
+    """Delete the storage of a specified model."""
     try:
         ctx.load(ctx_dump)
         modelStorage = ModelStorage(model_id)
@@ -38,13 +38,14 @@ def delete_model_storage(model_id, ctx_dump):
         logger.error(f'Something went wrong during deleting storage of model {model_id}: {e}')
 
 
-class ModelController():
+class ModelController:
     config: Config
 
     def __init__(self) -> None:
         self.config = Config()
 
-    def get_model_data(self, name: str = None, predictor_record=None, ml_handler_name='lightwood') -> dict:
+    def get_model_data(self, name: Optional[str] = None, predictor_record: Optional[Any] = None, ml_handler_name: str = 'lightwood') -> dict:
+        """Retrieve detailed data for a specified model."""
         if predictor_record is None:
             predictor_record = get_model_record(except_absent=True, name=name, ml_handler_name=ml_handler_name)
 
@@ -66,9 +67,7 @@ class ModelController():
         data['id'] = predictor_record.id
         data['version'] = predictor_record.version
 
-        json_storage = get_json_storage(
-            resource_id=predictor_record.id
-        )
+        json_storage = get_json_storage(resource_id=predictor_record.id)
         data['json_ai'] = json_storage.get('json_ai')
 
         if data.get('accuracies', None) is not None:
@@ -76,25 +75,25 @@ class ModelController():
                 data['accuracy'] = float(np.mean(list(data['accuracies'].values())))
         return data
 
-    def get_reduced_model_data(self, name: str = None, predictor_record=None, ml_handler_name='lightwood') -> dict:
+    def get_reduced_model_data(self, name: Optional[str] = None, predictor_record: Optional[Any] = None, ml_handler_name: str = 'lightwood') -> dict:
+        """Retrieve a reduced set of data for a specified model."""
         full_model_data = self.get_model_data(name=name, predictor_record=predictor_record, ml_handler_name=ml_handler_name)
         reduced_model_data = {}
-        for k in ['id', 'name', 'version', 'is_active', 'predict', 'status',
-                  'problem_definition', 'current_phase', 'accuracy', 'data_source', 'update', 'active',
-                  'mindsdb_version', 'error', 'created_at', 'fetch_data_query']:
+        for k in ['id', 'name', 'version', 'is_active', 'predict', 'status', 'problem_definition', 'current_phase',
+                  'accuracy', 'data_source', 'update', 'active', 'mindsdb_version', 'error', 'created_at', 'fetch_data_query']:
             reduced_model_data[k] = full_model_data.get(k, None)
 
         reduced_model_data['training_time'] = None
         if full_model_data.get('training_start_at') is not None:
             if full_model_data.get('training_stop_at') is not None:
                 reduced_model_data['training_time'] = (
-                    full_model_data.get('training_stop_at')
-                    - full_model_data.get('training_start_at')
+                    full_model_data['training_stop_at']
+                    - full_model_data['training_start_at']
                 )
             elif full_model_data.get('status') == 'training':
                 reduced_model_data['training_time'] = (
                     dt.datetime.now()
-                    - full_model_data.get('training_start_at')
+                    - full_model_data['training_start_at']
                 )
             if reduced_model_data['training_time'] is not None:
                 reduced_model_data['training_time'] = (
@@ -104,7 +103,8 @@ class ModelController():
 
         return reduced_model_data
 
-    def describe_model(self, session, project_name, model_name, attribute, version=None):
+    def describe_model(self, session: Any, project_name: str, model_name: str, attribute: str, version: Optional[str] = None) -> Any:
+        """Describe a specified attribute of a model."""
         args = {
             'name': model_name,
             'version': version,
@@ -115,14 +115,13 @@ class ModelController():
             args['active'] = None
 
         model_record = get_model_record(**args)
-
         integration_record = db.Integration.query.get(model_record.integration_id)
-
         ml_handler_base = session.integration_controller.get_ml_handler(integration_record.name)
 
         return ml_handler_base.describe(model_record.id, attribute)
 
-    def get_model(self, name, version=None, ml_handler_name=None, project_name=None):
+    def get_model(self, name: str, version: Optional[str] = None, ml_handler_name: Optional[str] = None, project_name: Optional[str] = None) -> dict:
+        """Retrieve a reduced set of data for a specified model."""
         show_active = True if version is None else None
         model_record = get_model_record(
             active=show_active,
@@ -132,17 +131,17 @@ class ModelController():
             project_name=project_name)
         return self.get_reduced_model_data(predictor_record=model_record)
 
-    def get_models(self, with_versions=False, ml_handler_name=None, integration_id=None,
-                   project_name=None):
+    def get_models(self, with_versions: bool = False, ml_handler_name: Optional[str] = None, integration_id: Optional[int] = None, project_name: Optional[str] = None) -> List[dict]:
+        """Retrieve a list of models."""
         models = []
         show_active = True if with_versions is False else None
-        for model_record in get_model_records(active=show_active, ml_handler_name=ml_handler_name,
-                                              integration_id=integration_id, project_name=project_name):
+        for model_record in get_model_records(active=show_active, ml_handler_name=ml_handler_name, integration_id=integration_id, project_name=project_name):
             model_data = self.get_reduced_model_data(predictor_record=model_record)
             models.append(model_data)
         return models
 
-    def delete_model(self, model_name: str, project_name: str = 'mindsdb', version=None):
+    def delete_model(self, model_name: str, project_name: str = 'mindsdb', version: Optional[str] = None) -> None:
+        """Delete a specified model."""
         from mindsdb.interfaces.database.database import DatabaseController
 
         project_record = db.Project.query.filter(
@@ -151,10 +150,9 @@ class ModelController():
             & (db.Project.deleted_at == null())
         ).first()
         if project_record is None:
-            raise Exception(f"Project '{project_name}' does not exists")
+            raise Exception(f"Project '{project_name}' does not exist")
 
         database_controller = DatabaseController()
-
         project = database_controller.get_project(project_name)
 
         if version is None:
@@ -179,7 +177,7 @@ class ModelController():
                 model_data = self.get_model_data(predictor_record=predictor_record)
                 if (
                     model_data.get('status') in ['generating', 'training']
-                    and isinstance(model_data.get('created_at'), str) is True
+                    and isinstance(model_data.get('created_at'), str)
                     and (dt.datetime.now() - parse_datetime(model_data.get('created_at'))) < dt.timedelta(hours=1)
                 ):
                     raise Exception('You are unable to delete models currently in progress, please wait before trying again')
@@ -201,9 +199,10 @@ class ModelController():
             modelStorage.delete()
         # endregion
 
-    def rename_model(self, old_name, new_name):
+    def rename_model(self, old_name: str, new_name: str) -> None:
+        """Rename a model."""
         model_record = get_model_record(name=new_name)
-        if model_record is None:
+        if model_record is not None:
             raise Exception(f"Model with name '{new_name}' already exists")
 
         for model_record in get_model_records(name=old_name):
@@ -211,8 +210,8 @@ class ModelController():
         db.session.commit()
 
     @staticmethod
-    def _get_data_integration_ref(statement, database_controller):
-        # TODO use database_controller handler_controller internally
+    def _get_data_integration_ref(statement: Any, database_controller: Any) -> Tuple[Optional[dict], Optional[str]]:
+        """Retrieve data integration reference for a given statement."""
         data_integration_ref = None
         fetch_data_query = None
         if statement.integration_name is not None:
@@ -223,7 +222,7 @@ class ModelController():
             if integration_name not in databases_meta:
                 raise EntityNotExistsError('Database does not exist', integration_name)
             data_integration_meta = databases_meta[integration_name]
-            # TODO improve here. Suppose that it is view
+
             if data_integration_meta['type'] == 'project':
                 data_integration_ref = {
                     'type': 'project'
@@ -239,8 +238,8 @@ class ModelController():
                 }
         return data_integration_ref, fetch_data_query
 
-    def prepare_create_statement(self, statement, database_controller):
-        # extract data from Create model or Retrain statement and prepare it for using in crate and retrain functions
+    def prepare_create_statement(self, statement: Any, database_controller: Any) -> dict:
+        """Prepare a statement for creating a model."""
         project_name = statement.name.parts[0].lower()
         model_name = statement.name.parts[1].lower()
 
@@ -258,7 +257,6 @@ class ModelController():
         label = None
         if statement.using is not None:
             label = statement.using.pop('tag', None)
-
             problem_definition['using'] = statement.using
 
         if statement.order_by is not None:
@@ -288,7 +286,8 @@ class ModelController():
             label=label
         )
 
-    def create_model(self, statement, ml_handler):
+    def create_model(self, statement: Any, ml_handler: Any) -> dict:
+        """Create a new model based on the given statement."""
         params = self.prepare_create_statement(statement, ml_handler.database_controller)
 
         existing_projects_meta = ml_handler.database_controller.get_dict(filter_type='project')
@@ -303,8 +302,8 @@ class ModelController():
 
         return ModelController.get_model_info(predictor_record)
 
-    def retrain_model(self, statement, ml_handler):
-        # active setting
+    def retrain_model(self, statement: Any, ml_handler: Any) -> dict:
+        """Retrain an existing model based on the given statement."""
         set_active = True
         if statement.using is not None:
             set_active = statement.using.pop('active', True)
@@ -338,7 +337,8 @@ class ModelController():
 
         return ModelController.get_model_info(predictor_record)
 
-    def prepare_finetune_statement(self, statement, database_controller):
+    def prepare_finetune_statement(self, statement: Any, database_controller: Any) -> dict:
+        """Prepare a statement for fine-tuning a model."""
         project_name, model_name, model_version = resolve_model_identifier(statement.name)
         if project_name is None:
             project_name = 'mindsdb'
@@ -383,13 +383,14 @@ class ModelController():
         )
 
     @profiler.profile()
-    def finetune_model(self, statement, ml_handler):
+    def finetune_model(self, statement: Any, ml_handler: Any) -> dict:
+        """Fine-tune an existing model based on the given statement."""
         params = self.prepare_finetune_statement(statement, ml_handler.database_controller)
         predictor_record = ml_handler.finetune(**params)
         return ModelController.get_model_info(predictor_record)
 
-    def update_model(self, session, project_name: str, model_name: str, problem_definition, version=None):
-
+    def update_model(self, session: Any, project_name: str, model_name: str, problem_definition: dict, version: Optional[str] = None) -> None:
+        """Update the configuration of an existing model."""
         model_record = get_model_record(
             name=model_name,
             version=version,
@@ -401,15 +402,16 @@ class ModelController():
         ml_handler_base = session.integration_controller.get_ml_handler(integration_record.name)
         ml_handler_base.update(args=problem_definition, model_id=model_record.id)
 
-        # update model record
+        # Update model record
         if 'using' in problem_definition:
-            learn_args = copy.deepcopy(model_record.learn_args)
+            learn_args = deepcopy(model_record.learn_args)
             learn_args['using'].update(problem_definition['using'])
             model_record.learn_args = learn_args
             db.session.commit()
 
     @staticmethod
-    def get_model_info(predictor_record):
+    def get_model_info(predictor_record: Any) -> pd.DataFrame:
+        """Retrieve detailed information for a specified model."""
         from mindsdb.interfaces.database.projects import ProjectController
         projects_controller = ProjectController()
         project = projects_controller.get(id=predictor_record.project_id)
@@ -430,8 +432,8 @@ class ModelController():
 
         return pd.DataFrame([record], columns=columns)
 
-    def set_model_active_version(self, project_name, model_name, version):
-
+    def set_model_active_version(self, project_name: str, model_name: str, version: str) -> None:
+        """Set a specific version of a model as active."""
         model_record = get_model_record(
             name=model_name,
             project_name=project_name,
@@ -444,7 +446,7 @@ class ModelController():
 
         model_record.active = True
 
-        # deactivate current active version
+        # Deactivate current active version
         model_records = db.Predictor.query.filter(
             db.Predictor.name == model_record.name,
             db.Predictor.project_id == model_record.project_id,
@@ -457,8 +459,8 @@ class ModelController():
 
         db.session.commit()
 
-    def delete_model_version(self, project_name, model_name, version):
-
+    def delete_model_version(self, project_name: str, model_name: str, version: str) -> None:
+        """Delete a specific version of a model."""
         model_record = get_model_record(
             name=model_name,
             project_name=project_name,
